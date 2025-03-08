@@ -1,0 +1,9 @@
+{
+  "name": "Issac Vinson",
+  "email": "issacvinson.ops@gmail.com",
+  "phone": "(907) 518-4614",
+  "resume": "/home/vinso/job_applier/resume.pdf",
+  "cover_letter_template": "Dear [Employer],\n\nI am excited to apply for the [Job Title] position at [Company]. With a Bachelor of Science in Computer Science from the University of Alaska, Anchorage, and extensive experience in software development, I bring a strong technical background and leadership skills to your team. I have [Experience] and am proficient in [Skills].\n\nAs Wing Commander in the AFROTC, I led a detachment of 33 subordinates, creating training plans and ensuring all members met 66 training objectives. My technical experience includes developing a Monte Carlo Heuristic Chess Bot, a Maze Generator in C, and an Automatic Job Applier using Python, Selenium, and LLM integration. Additionally, my seasonal work as a Deckhand in Alaska honed my ability to lead diverse teams under pressure, including assembling teams for 22-hour workdays in treacherous conditions.\n\nI am confident that my skills and experiences make me a strong fit for this role, and I am eager to contribute to [Company]’s success. I look forward to the opportunity to discuss how I can add value to your team.\n\nSincerely,\nIssac Vinson",
+  "experience": "3+ years in software development, including projects like a Monte Carlo Heuristic Chess Bot, a Maze Generator in C, and an Automatic Job Applier using Python and Selenium. Led a detachment of 33 as Wing Commander in AFROTC, creating training plans and evaluations. Assembled and led teams in high-pressure environments as a Deckhand in Alaska, contributing to the catch of over 1.5 million pounds of fish.",
+  "skills": ["Python", "C/C++", "SQL", "Web Development", "Selenium", "LLM Integration", "ARM Assembly", "C#", "Bash Programming", "Flask", "Kotlin (Android Studio)", "Quantitative Analysis", "Data Visualization"]
+}
