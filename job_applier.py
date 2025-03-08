@@ -17,16 +17,32 @@ XAI_API_KEY = os.getenv("XAI_API_KEY")
 # Initialize Grok client
 client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
 
-# Load profile
+# Function to download resume from GitHub
+def download_resume(url, local_path):
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(local_path, "wb") as f:
+            f.write(response.content)
+        print(f"Resume downloaded to {local_path}")
+    else:
+        raise Exception(f"Failed to download resume from {url}. Status code: {response.status_code}")
+
+# Download resume
+resume_url = "https://raw.githubusercontent.com/IssacVinson/AutoJobApplications/main/Resume%20Mar%2025.pdf"
+local_resume_path = "/home/vinso/job_applier/resume.pdf"
+download_resume(resume_url, local_resume_path)
+
+# Load profile and update resume path
 with open("profile.json", "r") as f:
     profile = json.load(f)
+profile["resume"] = local_resume_path  # Update the resume path dynamically
 
 # Set up Selenium with headless Chromium
 chrome_options = Options()
 chrome_options.add_argument("--headless")  # Run in headless mode
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
-service = Service("/usr/lib/chromium-browser/chromedriver")
+service = Service("/usr/bin/chromedriver")  # Updated path to match your system
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
 def scrape_jobs(keyword, location):
@@ -44,6 +60,24 @@ def scrape_jobs(keyword, location):
         link = "https://www.indeed.com" + title_elem["href"]
         job_list.append({"title": title, "link": link})
     return job_list
+
+def filter_job(job_link):
+    driver.get(job_link)
+    time.sleep(2)
+    try:
+        job_desc = driver.find_element(By.CLASS_NAME, "jobsearch-JobDescriptionSection").text
+    except:
+        return False
+
+    response = client.chat.completions.create(
+        model="grok-beta",
+        messages=[
+            {"role": "system", "content": "You are a job application assistant."},
+            {"role": "user", "content": f"Given this profile: {profile}, does this job description match my skills and experience? Job description: {job_desc}"}
+        ]
+    )
+    answer = response.choices[0].message.content.lower()
+    return "yes" in answer or "match" in answer
 
 def generate_cover_letter(job_desc):
     response = client.chat.completions.create(
@@ -134,11 +168,21 @@ def apply_to_job(job_link):
 
 def main():
     # Scrape remote software jobs
-    jobs = scrape_jobs("software developer", "remote")
+    jobs = scrape_jobs("software developer OR AI Engineer OR Python Developer", "remote")
     print(f"Found {len(jobs)} jobs.")
 
-    # Apply to first 3 jobs for testing
-    for job in jobs[:3]:
+    # Filter jobs
+    filtered_jobs = []
+    for job in jobs:
+        if filter_job(job["link"]):
+            filtered_jobs.append(job)
+            print(f"Job matches: {job['title']}")
+        else:
+            print(f"Job does not match: {job['title']}")
+        time.sleep(2)  # Avoid overwhelming servers
+
+    # Apply to first 3 filtered jobs
+    for job in filtered_jobs[:3]:
         apply_to_job(job["link"])
         time.sleep(5)  # Avoid overwhelming servers
 
