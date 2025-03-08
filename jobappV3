@@ -1,0 +1,420 @@
+import os
+import json
+import time
+import requests
+import re
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+XAI_API_KEY = os.getenv("XAI_API_KEY")
+
+# Initialize Grok client
+client = OpenAI(api_key=XAI_API_KEY, base_url="https://api.x.ai/v1")
+
+# Function to download resume from GitHub
+def download_resume(url, local_path):
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(local_path, "wb") as f:
+            f.write(response.content)
+        print(f"Resume downloaded to {local_path}")
+    else:
+        raise Exception(f"Failed to download resume from {url}. Status code: {response.status_code}")
+
+# Download resume
+resume_url = "https://raw.githubusercontent.com/IssacVinson/AutoJobApplications/main/Resume%20Mar%2025.pdf"
+local_resume_path = "/home/vinso/job_applier/resume.pdf"
+download_resume(resume_url, local_resume_path)
+
+# Load profile and update resume path
+with open("profile.json", "r") as f:
+    profile = json.load(f)
+profile["resume"] = local_resume_path  # Update the resume path dynamically
+
+# Set up Selenium with headless Chromium
+chrome_options = Options()
+chrome_options.add_argument("--headless")  # Run in headless mode
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+service = Service("/usr/bin/chromedriver")  # Correct path
+driver = webdriver.Chrome(service=service, options=chrome_options)
+
+def scrape_jobs_indeed(keyword, location):
+    url = f"https://www.indeed.com/jobs?q={keyword}&l={location}&remotejob=032b3046-06a3-4876-8dfd-474eb5e7ed11"
+    print(f"Scraping Indeed with Selenium: {url}")
+    driver.get(url)
+    time.sleep(5)
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid='jobcard']"))
+        )
+        jobs = driver.find_elements(By.CSS_SELECTOR, "[data-testid='jobcard']")
+        job_list = []
+        for i, job in enumerate(jobs):
+            try:
+                title_elem = job.find_element(By.CSS_SELECTOR, "[data-testid='jobTitle']")
+                link_elem = job.find_element(By.TAG_NAME, "a")
+                title = title_elem.text.strip() if title_elem and title_elem.text else f"Untitled_{i}"
+                link = link_elem.get_attribute("href") if link_elem and link_elem.get_attribute("href") else url
+                job_list.append({"title": title, "link": link, "source": "Indeed"})
+                print(f"Scraped job {i} from Indeed: {title}")
+            except Exception as e:
+                print(f"Error scraping Indeed job {i}: {e}")
+                job_list.append({"title": f"Untitled_{i}", "link": url, "source": "Indeed"})
+        return job_list
+    except Exception as e:
+        print(f"Failed to scrape Indeed jobs: {e}")
+        return []
+
+def scrape_jobs_linkedin(keyword, location):
+    keyword_formatted = keyword.replace(" OR ", "+").replace(" ", "+")
+    url = f"https://www.linkedin.com/jobs/search/?keywords={keyword_formatted}&location={location}&f_WT=2"
+    print(f"Scraping LinkedIn with Selenium: {url}")
+    driver.get(url)
+    time.sleep(5)
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.CLASS_NAME, "base-card"))
+        )
+        jobs = driver.find_elements(By.CLASS_NAME, "base-card")
+        job_list = []
+        for i, job in enumerate(jobs):
+            try:
+                title_elem = job.find_element(By.CLASS_NAME, "base-search-card__title")
+                link_elem = job.find_element(By.CLASS_NAME, "base-card__full-link")
+                title = title_elem.text.strip() if title_elem and title_elem.text else f"Untitled_{i}"
+                link = link_elem.get_attribute("href") if link_elem and link_elem.get_attribute("href") else url
+                job_list.append({"title": title, "link": link, "source": "LinkedIn"})
+                print(f"Scraped job {i} from LinkedIn: {title}")
+            except Exception as e:
+                print(f"Error scraping LinkedIn job {i}: {e}")
+                job_list.append({"title": f"Untitled_{i}", "link": url, "source": "LinkedIn"})
+        return job_list
+    except Exception as e:
+        print(f"Failed to scrape LinkedIn jobs: {e}")
+        return []
+
+def scrape_jobs_glassdoor(keyword, location):
+    keyword_formatted = keyword.replace(" OR ", "+").replace(" ", "+")
+    url = f"https://www.glassdoor.com/Job/{keyword_formatted}-jobs-SRCH_KO0,30.htm?remoteWorkType=1"
+    print(f"Scraping Glassdoor with Selenium: {url}")
+    driver.get(url)
+    time.sleep(5)
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.CLASS_NAME, "JobsList_jobListItem__JBBUV"))
+        )
+        jobs = driver.find_elements(By.CLASS_NAME, "JobsList_jobListItem__JBBUV")
+        job_list = []
+        for i, job in enumerate(jobs):
+            try:
+                title_elem = job.find_element(By.CLASS_NAME, "JobCard_seoLink__WdqHZ")
+                link_elem = title_elem
+                title = title_elem.text.strip() if title_elem and title_elem.text else f"Untitled_{i}"
+                link = link_elem.get_attribute("href") if link_elem and link_elem.get_attribute("href") else url
+                job_list.append({"title": title, "link": link, "source": "Glassdoor"})
+                print(f"Scraped job {i} from Glassdoor: {title}")
+            except Exception as e:
+                print(f"Error scraping Glassdoor job {i}: {e}")
+                job_list.append({"title": f"Untitled_{i}", "link": url, "source": "Glassdoor"})
+        return job_list
+    except Exception as e:
+        print(f"Failed to scrape Glassdoor jobs: {e}")
+        return []
+
+def scrape_jobs_x(keyword, location):
+    query = f"{keyword} {location} job -filter:replies"
+    query_formatted = query.replace(" ", "%20").replace("OR", "%20OR%20")
+    url = f"https://x.com/search?q={query_formatted}&src=typed_query"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Failed to fetch X jobs: {e}")
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    tweets = soup.find_all("div", attrs={"data-testid": "tweet"})
+    job_list = []
+    for i, tweet in enumerate(tweets):
+        try:
+            text_elem = tweet.find("div", class_="css-901oao r-1bw4e3l r-1b43r93 r-1nao33i r-1q142lx")
+            link_elem = tweet.find("a", href=True)
+            if not text_elem or not link_elem:
+                continue
+            title = text_elem.text.strip()[:50] + "..." if text_elem and text_elem.text else f"Untitled_{i}"
+            link = "https://x.com" + link_elem["href"] if link_elem and link_elem.get("href") else url
+            job_list.append({"title": title, "link": link, "source": "X"})
+            print(f"Scraped job {i} from X: {title}")
+        except Exception as e:
+            print(f"Error scraping X job {i}: {e}")
+            job_list.append({"title": f"Untitled_{i}", "link": url, "source": "X"})
+    return job_list
+
+def filter_job(job_link):
+    driver.get(job_link)
+    time.sleep(2)
+    try:
+        job_desc = driver.find_element(By.CLASS_NAME, "jobsearch-JobDescriptionSection").text
+    except:
+        try:
+            job_desc = driver.find_element(By.CLASS_NAME, "description").text  # Fallback class
+        except:
+            print(f"Could not extract job description from {job_link}")
+            return False
+
+    with open("debug_job_desc.txt", "a") as f:
+        f.write(f"Link: {job_link}\nDescription: {job_desc}\n\n")
+    response = client.chat.completions.create(
+        model="grok-beta",
+        messages=[
+            {"role": "system", "content": "You are a job application assistant."},
+            {"role": "user", "content": f"Given this profile: {profile}, does this job description match my skills and experience? Job description: {job_desc}"}
+        ]
+    )
+    answer = response.choices[0].message.content.lower()
+    return "yes" in answer or "match" in answer
+
+def generate_cover_letter(job_desc):
+    response = client.chat.completions.create(
+        model="grok-beta",
+        messages=[
+            {"role": "system", "content": "You are a job application assistant."},
+            {"role": "user", "content": f"Using this profile: {profile}, write a cover letter for this job description: {job_desc}"}
+        ]
+    )
+    return response.choices[0].message.content
+
+def answer_essay_question(question):
+    sensitive_keywords = ["ssn", "social security", "password", "credit card", "bank account"]
+    if any(keyword in question.lower() for keyword in sensitive_keywords):
+        print(f"\nSensitive question detected: {question}")
+        user_answer = input("Please provide an answer (or press Enter to skip): ")
+        return user_answer if user_answer else "Skipped by user"
+    
+    try:
+        response = client.chat.completions.create(
+            model="grok-beta",
+            messages=[
+                {"role": "system", "content": "You are a job application assistant answering essay questions based on this profile: " + str(profile)},
+                {"role": "user", "content": f"Answer this question: {question}"}
+            ]
+        )
+        answer = response.choices[0].message.content
+        return answer
+    except Exception as e:
+        print(f"\nFailed to generate answer for question: {question}")
+        print(f"Error: {e}")
+        user_answer = input("Please provide an answer (or press Enter to skip): ")
+        return user_answer if user_answer else "Skipped by user"
+
+def apply_to_job(job_link):
+    print(f"Applying to: {job_link}")
+    driver.get(job_link)
+    time.sleep(5)  # Increased wait for page load
+
+    # Get and preprocess page HTML
+    try:
+        body_html = driver.find_element(By.TAG_NAME, "body").get_attribute("outerHTML")
+        max_length = 100000
+        body_html = body_html[:max_length] if len(body_html) > max_length else body_html
+    except Exception as e:
+        print(f"Failed to get page HTML: {e}")
+        return
+
+    # Generate cover letter
+    try:
+        job_desc = driver.find_element(By.CLASS_NAME, "jobsearch-JobDescriptionSection").text
+    except:
+        job_desc = "No description found."
+    cover_letter = generate_cover_letter(job_desc)
+    with open("cover_letter.txt", "w") as f:
+        f.write(cover_letter)
+
+    # Robust Grok page analysis
+    action_plan = {}
+    max_retries = 3
+    retry_delay = 5
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="grok-beta",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a web automation assistant. Analyze the provided HTML of a job application page and identify: 1) Input fields to fill (e.g., name, email, phone) with their IDs, names, or XPaths, 2) Buttons to click (e.g., 'Apply', 'Submit', 'Next') with their XPaths and suggested order, 3) File upload fields for resume or cover letter with their XPaths. Return ONLY a JSON object with keys 'inputs', 'buttons', and 'file_inputs', each containing a list of dictionaries with 'selector' (XPath or ID/name) and 'type' (e.g., 'text', 'button', 'file'). If no elements are found, return: {}."
+                    },
+                    {"role": "user", "content": f"HTML: {body_html}"}
+                ],
+                timeout=30
+            )
+            instructions = response.choices[0].message.content.strip()
+            json_match = re.search(r'\{.*\}', instructions, re.DOTALL)
+            if json_match:
+                instructions = json_match.group(0)
+            try:
+                action_plan = json.loads(instructions)
+                if not isinstance(action_plan, dict) or not all(key in action_plan for key in ['inputs', 'buttons', 'file_inputs']):
+                    raise ValueError("Invalid JSON structure from Grok")
+                break
+            except json.JSONDecodeError as e:
+                print(f"Attempt {attempt + 1}/{max_retries} failed to parse JSON: {e}. Response: {instructions}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    action_plan = {"inputs": [], "buttons": [], "file_inputs": []}
+            except ValueError as e:
+                print(f"Attempt {attempt + 1}/{max_retries} failed due to invalid structure: {e}. Response: {instructions}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    action_plan = {"inputs": [], "buttons": [], "file_inputs": []}
+        except Exception as e:
+            print(f"Attempt {attempt + 1}/{max_retries} failed to call Grok: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                action_plan = {"inputs": [], "buttons": [], "file_inputs": []}
+
+    with open("action_plan.log", "a") as f:
+        f.write(f"Job Link: {job_link}\nAction Plan: {json.dumps(action_plan)}\n\n")
+
+    # Execute actions with verification
+    success = False
+    try:
+        # Fill input fields with wait
+        for input_field in action_plan.get("inputs", []):
+            selector = input_field.get("selector", "")
+            field_type = input_field.get("type", "text")
+            if not selector:
+                continue
+            try:
+                element = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, selector) if "/" in selector else (By.ID, selector.split("id=")[-1] if "id=" in selector else (By.NAME, selector.split("name=")[-1])))
+                )
+                if field_type == "text":
+                    if "first_name" in selector.lower():
+                        element.send_keys(profile["name"].split()[0])
+                    elif "last_name" in selector.lower():
+                        element.send_keys(profile["name"].split()[-1])
+                    elif "email" in selector.lower():
+                        element.send_keys(profile["email"])
+                    elif "phone" in selector.lower():
+                        element.send_keys(profile["phone"])
+                    else:
+                        answer = answer_essay_question(f"Fill this field: {selector}")
+                        element.send_keys(answer if answer else "")
+                elif field_type in ["checkbox", "radio"]:
+                    element.click()
+                print(f"Filled {field_type} field with selector: {selector}")
+            except Exception as e:
+                print(f"Failed to fill input {selector}: {e}")
+
+        # Upload files
+        for file_input in action_plan.get("file_inputs", []):
+            selector = file_input.get("selector", "")
+            if not selector:
+                continue
+            try:
+                element = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, selector))
+                )
+                if "resume" in selector.lower():
+                    element.send_keys(profile["resume"])
+                elif "cover" in selector.lower():
+                    element.send_keys(os.path.abspath("cover_letter.txt"))
+                print(f"Uploaded file for selector: {selector}")
+            except Exception as e:
+                print(f"Failed to upload file for {selector}: {e}")
+
+        # Click buttons with wait and retries
+        for button in action_plan.get("buttons", []):
+            selector = button.get("selector", "")
+            if not selector:
+                continue
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    element = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, selector))
+                    )
+                    element.click()
+                    time.sleep(2)
+                    print(f"Clicked button with selector: {selector}")
+                    success = True
+                    break
+                except Exception as e:
+                    print(f"Attempt {attempt + 1}/{max_retries} failed to click {selector}: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    else:
+                        print(f"Max retries reached for button {selector}")
+
+        # Verify application success
+        if success:
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Application submitted') or contains(text(), 'Thank you') or contains(text(), 'applied')]"))
+                )
+                print("Application successfully submitted (confirmed by page content)!")
+            except:
+                print("Application may have been submitted, but no confirmation found.")
+        else:
+            print("No application actions were successful.")
+
+    except Exception as e:
+        print(f"Error executing action plan: {e}")
+        print("Application process failed.")
+
+def main():
+    # Scrape jobs from multiple sources
+    keyword = "software developer OR AI Engineer OR Python Developer"
+    location = "remote"
+    
+    print("Scraping jobs from Indeed...")
+    indeed_jobs = scrape_jobs_indeed(keyword, location)
+    print("Scraping jobs from LinkedIn...")
+    linkedin_jobs = scrape_jobs_linkedin(keyword, location)
+    print("Scraping jobs from Glassdoor...")
+    glassdoor_jobs = scrape_jobs_glassdoor(keyword, location)
+    print("Scraping jobs from X...")
+    x_jobs = scrape_jobs_x(keyword, location)
+
+    # Combine all jobs
+    jobs = indeed_jobs + linkedin_jobs + glassdoor_jobs + x_jobs
+    print(f"Found {len(jobs)} jobs in total.")
+
+    # Limit to 10 jobs for testing
+    jobs = jobs[:10]
+
+    # Filter jobs
+    filtered_jobs = []
+    for job in jobs:
+        if filter_job(job["link"]):
+            filtered_jobs.append(job)
+            print(f"Job matches: {job['title']} (Source: {job['source']})")
+        else:
+            print(f"Job does not match: {job['title']} (Source: {job['source']})")
+        time.sleep(2)  # Avoid overwhelming servers
+
+    # Apply to first 3 filtered jobs
+    for job in filtered_jobs[:3]:
+        apply_to_job(job["link"])
+        time.sleep(5)  # Avoid overwhelming servers
+
+    driver.quit()
+
+if __name__ == "__main__":
+    main()
