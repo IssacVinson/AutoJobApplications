@@ -11,6 +11,11 @@ def load_profile(profile_path='profile.json'):
     with open(profile_path, 'r') as f:
         return json.load(f)
 
+def load_oauth2_credentials(credentials_path='oauth2_credentials.json'):
+    """Load OAuth2 credentials from a JSON file."""
+    with open(credentials_path, 'r') as f:
+        return json.load(f)
+
 def get_access_token(client_id, client_secret, refresh_token):
     """
     Obtain a new access token using the refresh token.
@@ -88,43 +93,38 @@ def send_email_oauth2(smtp_server, username, access_token, subject, body, to_ema
         print("Failed to send email:", e)
 
 def main():
-    # -------------------------------
-    # 1. OAuth2 Credentials
-    # -------------------------------
-    CLIENT_ID = "918805781037-v0tceqv4hq4ubp8v10g4e2qidflpve9i.apps.googleusercontent.com"
-    CLIENT_SECRET = "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"
-    REFRESH_TOKEN = "1//04ykAAWAlsKQKCgYIARAAGAQSNwF-L9IruYgtOPpt88ssqOYTRkPq1SdVq4kW0uM-HvgrKpyQ4JMLpGjXVG9-xflupKrQV9donT8"
-    USER_EMAIL = "issacvinson.ops@gmail.com"
+    # 1. Load OAuth2 credentials from JSON
+    oauth2_creds = load_oauth2_credentials("oauth2_credentials.json")
+    client_id = oauth2_creds["client_id"]
+    client_secret = oauth2_creds["client_secret"]
+    refresh_token = oauth2_creds["refresh_token"]
+    user_email = oauth2_creds["user"]
 
-    # -------------------------------
-    # 2. Get a fresh access token
-    # -------------------------------
+    # 2. Obtain an access token using the refresh token
     try:
-        access_token = get_access_token(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
+        access_token = get_access_token(client_id, client_secret, refresh_token)
     except Exception as e:
-        print(e)
+        print("Error obtaining access token:", e)
         return
 
-    # -------------------------------
-    # 3. Load your profile & create email content
-    # -------------------------------
+    # 3. Load the profile data for cover letter & resume
     profile = load_profile("profile.json")
     job_details = {
         "job_title": "Software Engineer",
         "company": "Lockheed Martin"
     }
     hr_name = "Hiring Manager"
+    
+    # 4. Generate the email content
     email_body = generate_email_content(profile, job_details, hr_name)
     subject = f"Application for {job_details['job_title']} Position at {job_details['company']}"
-
-    # -------------------------------
-    # 4. Send the email
-    # -------------------------------
+    
+    # 5. Send the email
     smtp_server = "smtp.gmail.com"
-    to_email = USER_EMAIL  # For testing, send to your own address
-    resume_path = profile.get("resume")  # e.g., "/home/pi/job_applier/resume.pdf"
+    to_email = user_email  # For testing, send to your own address
+    resume_path = profile.get("resume")  # e.g., /home/pi/job_applier/resume.pdf
 
-    send_email_oauth2(smtp_server, USER_EMAIL, access_token, subject, email_body, to_email, resume_path)
+    send_email_oauth2(smtp_server, user_email, access_token, subject, email_body, to_email, resume_path)
 
 if __name__ == "__main__":
     main()
