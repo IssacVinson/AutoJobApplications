@@ -1,0 +1,130 @@
+import json
+import base64
+import requests
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from email.mime.text import MIMEText
+
+def load_profile(profile_path='profile.json'):
+    """Load the candidate's profile from a JSON file."""
+    with open(profile_path, 'r') as f:
+        return json.load(f)
+
+def get_access_token(client_id, client_secret, refresh_token):
+    """
+    Obtain a new access token using the refresh token.
+    POST to https://oauth2.googleapis.com/token
+    """
+    token_url = 'https://oauth2.googleapis.com/token'
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+    params = {
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'refresh_token': refresh_token,
+        'grant_type': 'refresh_token'
+    }
+
+    response = requests.post(token_url, data=params, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        return data['access_token']
+    else:
+        raise Exception("Error obtaining access token: " + response.text)
+
+def generate_oauth2_string(username, access_token):
+    """
+    Generate an OAuth2 authentication string for SMTP (XOAUTH2).
+    Format: base64("user=<email>\x01auth=Bearer <token>\x01\x01")
+    """
+    auth_string = f"user={username}\1auth=Bearer {access_token}\1\1"
+    return base64.b64encode(auth_string.encode("utf-8")).decode("utf-8")
+
+def generate_email_content(profile, job_details, hr_name):
+    """
+    Generate a personalized email using the candidate's cover letter template.
+    Replaces [Employer] and [Job Title] with actual job details and prepends an introduction.
+    """
+    cover_letter = profile.get("cover_letter_template", "")
+    cover_letter = cover_letter.replace("[Employer]", job_details.get("company", ""))
+    cover_letter = cover_letter.replace("[Job Title]", job_details.get("job_title", ""))
+    
+    personalized_intro = (
+        f"Dear {hr_name},\n\n"
+        f"I am writing to express my interest in the {job_details.get('job_title', '')} position at {job_details.get('company', '')}. "
+        "I believe my skills and experience align well with the requirements of the role.\n\n"
+    )
+    return personalized_intro + cover_letter
+
+def send_email_oauth2(smtp_server, username, access_token, subject, body, to_email, resume_path):
+    """Send an email using OAuth2 (XOAUTH2) authentication and attach the resume."""
+    msg = MIMEMultipart()
+    msg['From'] = username
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+    
+    # Attach the resume PDF if available
+    try:
+        with open(resume_path, "rb") as f:
+            part = MIMEApplication(f.read(), Name="resume.pdf")
+        part['Content-Disposition'] = 'attachment; filename="resume.pdf"'
+        msg.attach(part)
+    except Exception as e:
+        print("Error attaching resume:", e)
+    
+    # Connect via SSL and authenticate with XOAUTH2
+    try:
+        with smtplib.SMTP_SSL(smtp_server, 465) as server:
+            server.set_debuglevel(1)  # Enable SMTP debug output
+            server.ehlo()
+            oauth2_string = generate_oauth2_string(username, access_token)
+            code, response = server.docmd("AUTH", "XOAUTH2 " + oauth2_string)
+            if code != 235:
+                raise Exception("Authentication failed: " + str(response))
+            server.send_message(msg)
+        print("Email sent successfully.")
+    except Exception as e:
+        print("Failed to send email:", e)
+
+def main():
+    # -------------------------------
+    # 1. OAuth2 Credentials
+    # -------------------------------
+    CLIENT_ID = "918805781037-v0tceqv4hq4ubp8v10g4e2qidflpve9i.apps.googleusercontent.com"
+    CLIENT_SECRET = "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"
+    REFRESH_TOKEN = "1//04ykAAWAlsKQKCgYIARAAGAQSNwF-L9IruYgtOPpt88ssqOYTRkPq1SdVq4kW0uM-HvgrKpyQ4JMLpGjXVG9-xflupKrQV9donT8"
+    USER_EMAIL = "issacvinson.ops@gmail.com"
+
+    # -------------------------------
+    # 2. Get a fresh access token
+    # -------------------------------
+    try:
+        access_token = get_access_token(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
+    except Exception as e:
+        print(e)
+        return
+
+    # -------------------------------
+    # 3. Load your profile & create email content
+    # -------------------------------
+    profile = load_profile("profile.json")
+    job_details = {
+        "job_title": "Software Engineer",
+        "company": "Lockheed Martin"
+    }
+    hr_name = "Hiring Manager"
+    email_body = generate_email_content(profile, job_details, hr_name)
+    subject = f"Application for {job_details['job_title']} Position at {job_details['company']}"
+
+    # -------------------------------
+    # 4. Send the email
+    # -------------------------------
+    smtp_server = "smtp.gmail.com"
+    to_email = USER_EMAIL  # For testing, send to your own address
+    resume_path = profile.get("resume")  # e.g., "/home/pi/job_applier/resume.pdf"
+
+    send_email_oauth2(smtp_server, USER_EMAIL, access_token, subject, email_body, to_email, resume_path)
+
+if __name__ == "__main__":
+    main()
